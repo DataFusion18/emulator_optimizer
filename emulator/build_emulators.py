@@ -22,30 +22,6 @@ from sklearn import cross_validation
 from cStringIO import StringIO
 from sklearn.grid_search import GridSearchCV
 
-def make_data_index(df):
-    dates = []
-    for index, row in df.iterrows():
-        s = str(int(float(row['YEAR']))) + " " + str(int(float(row['DOY'])))
-        dates.append(dt.datetime.strptime(s, '%Y %j'))
-    return dates
-
-def date_converter(*args):
-    return dt.datetime.strptime(str(int(float(args[0]))) + " " +\
-                                str(int(float(args[1]))), '%Y %j')
-
-def remove_comments_from_header(fname):
-    """ I have made files with comments which means the headings can't be
-    parsed to get dictionary headers for pandas! Solution is to remove these
-    comments first """
-    s = StringIO()
-    with open(fname) as f:
-        for line in f:
-            if '#' in line:
-                line = line.replace("#", "").lstrip(' ')
-            s.write(line)
-    s.seek(0) # "rewind" to the beginning of the StringIO object
-
-    return s
 
 def main():
 
@@ -146,18 +122,31 @@ def main():
     plt.legend()
     plt.show()
 
-    return None
+def make_data_index(df):
+    dates = []
+    for index, row in df.iterrows():
+        s = str(int(float(row['YEAR']))) + " " + str(int(float(row['DOY'])))
+        dates.append(dt.datetime.strptime(s, '%Y %j'))
+    return dates
 
-#    gs = gridspec.GridSpec(1, 2)
-#    for i in range(2):
-#        ax = plt.subplot(gs[i])
-#        ax.plot(pred_test[:, i], Y_test[:, i], 'ro')
-#    plt.show()
+def date_converter(*args):
+    return dt.datetime.strptime(str(int(float(args[0]))) + " " +\
+                                str(int(float(args[1]))), '%Y %j')
 
-# --------------------------------------------------------------------------------
+def remove_comments_from_header(fname):
+    """ I have made files with comments which means the headings can't be
+    parsed to get dictionary headers for pandas! Solution is to remove these
+    comments first """
+    s = StringIO()
+    with open(fname) as f:
+        for line in f:
+            if '#' in line:
+                line = line.replace("#", "").lstrip(' ')
+            s.write(line)
+    s.seek(0) # "rewind" to the beginning of the StringIO object
 
+    return s
 
-    return None
 
 if __name__ == "__main__":
 
