@@ -5,7 +5,8 @@ import pickle
 import numpy as np
 import pandas as pd
 import seaborn as sns
-
+import datetime as dt
+import sys
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
@@ -18,53 +19,63 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn import cross_validation
-
+from cStringIO import StringIO
 from sklearn.grid_search import GridSearchCV
 
-def get_site_name(fpath):
-    return fpath.split("/")[-3]
+def make_data_index(df):
+    dates = []
+    for index, row in df.iterrows():
+        s = str(int(float(row['YEAR']))) + " " + str(int(float(row['DOY'])))
+        dates.append(dt.datetime.strptime(s, '%Y %j'))
+    return dates
 
-def import_spa_outputs(fpath):
-    dataset = pd.read_csv(fpath, sep=r',\s+', engine='python', na_values=["Infinity"])
-    dataset.rename(columns=lambda x: x.strip(), inplace=True)
-    return dataset
+def date_converter(*args):
+    return dt.datetime.strptime(str(int(float(args[0]))) + " " +\
+                                str(int(float(args[1]))), '%Y %j')
+
+def remove_comments_from_header(fname):
+    """ I have made files with comments which means the headings can't be
+    parsed to get dictionary headers for pandas! Solution is to remove these
+    comments first """
+    s = StringIO()
+    with open(fname) as f:
+        for line in f:
+            if '#' in line:
+                line = line.replace("#", "").lstrip(' ')
+            s.write(line)
+    s.seek(0) # "rewind" to the beginning of the StringIO object
+
+    return s
 
 def main():
 
-#----------------------------------------------------------------------
-    # STAGE DATA
+    # GDAY inputs
+    fdir = "/Users/mq20101267/Desktop/gday_simulations/DUKE/step_change/met_data"
+    fname = os.path.join(fdir, "DUKE_met_data_amb_co2.csv")
+    s = remove_comments_from_header(fname)
+    df_met = pd.read_csv(s, parse_dates=[[0,1]], skiprows=4, index_col=0,
+                           sep=",", keep_date_col=True,
+                           date_parser=date_converter)
 
-    # get the filepaths leading the hourly outputs from a designated set of
-    # SPA simulations
-    file_paths = [os.path.join(dp, f) for (dp, _, fn) in os.walk(DIRPATH) \
-                  for f in fn if re.search(r"hourly", f)]
+    met_data = df_met.ix[:,2:].values
 
-    # load these with pandas and save in a dictionary - site name as label
-    spa_hourly = {get_site_name(fn): import_spa_outputs(fn) \
-                  for fn in file_paths}
+    # GDAY outputs
+    fdir = "/Users/mq20101267/Desktop/gday_simulations/DUKE/step_change/outputs"
+    fname = os.path.join(fdir, "D1GDAYDUKEAMB.csv")
+    df = pd.read_csv(fname, skiprows=3, sep=",", skipinitialspace=True)
+    df['date'] = make_data_index(df)
+    df = df.set_index('date')
 
-    # also load the pre-saved driver information that was used to run the simulations
-    natt_datasets = pickle.load(open(DIRPATH + FILEPATH, 'rb'))
+    target = df["GPP"].values
+
 
 #----------------------------------------------------------------------
     # BUILD MODELS
 
-    # practice set
-    print(list(spa_hourly.keys()))
-    sname = list(spa_hourly.keys())[0]
-    print(sname)
-
-    # the target values it is trying to reproduce
-    #target = spa_hourly[sname].ix[:, ["gpp", "lemod"]].values
-    target = spa_hourly[sname]["gpp"]
-    # the drivers of the emulator (crop to match length of target)
-    data = natt_datasets[sname]["drivers"] \
-        .ix[:len(target), 1:]
-
     # hold back 40% of the dataset for testing
-    X_train, X_test, Y_train, Y_test = \
-        cross_validation.train_test_split(data.values, target.values, \
-                                          test_size=0.9, random_state=0)
+    #X_train, X_test, Y_train, Y_test = \
+    #    cross_validation.train_test_split(met_data, target, \
+    #                                      test_size=0.99, random_state=0)
 
 #    param_DTR = { \
 #        #"min_samples_split": [2, 10, 20], \
@@ -91,7 +102,7 @@ def main():
 #        }
 #
     param_KNR = { \
-        "n_neighbors": [5, 10, 20, 100, 200], \
+        "n_neighbors": [5, 10, 20], \
         "weights": ['uniform', 'distance'], \
         }
 
@@ -107,29 +118,30 @@ def main():
     modlab = regmod_p.steps[-1][0]
 
     par_grid = {'{0}__{1}'.format(modlab, parkey): pardat \
-                 for (parkey, pardat) in param_KNR.items()}
+                 for (parkey, pardat) in param_KNR.iteritems()}
 
     #emulator = GridSearchCV(regmod, param_grid=param_DTR, cv=5)
     emulator = GridSearchCV(regmod_p, param_grid=par_grid, cv=5)
 
-    emulator.fit(X_train, Y_train)
-    pred_test = emulator.predict(X_test)
+    #emulator.fit(X_train, Y_train)
+    emulator.fit(met_data, df.GPP)
+    pred_test = emulator.predict(met_data)
 
     output_test = pd.DataFrame({'emu': pred_test, \
-                                'spa': Y_test})
+                                'spa': df.GPP})
 #    sns.jointplot(x='emu', y='spa', data=output_test, kind='reg')
 #    plt.show()
 
-    output_emulated = pd.DataFrame({'DT': data.index, \
-                                    'emu': emulator.predict(data), \
-                                    'spa': target})
+    output_emulated = pd.DataFrame({'DT': df.index, \
+                                    'emu': emulator.predict(met_data), \
+                                    'gday': df.GPP})
     output_emulated.set_index(['DT'], inplace=True)
     print(output_emulated.head())
 
     output_day = output_emulated.resample('D').mean()
 
-    plt.plot_date(output_day.index, output_day['emu'], '-', label='Emulator')
-    plt.plot_date(output_day.index, output_day['spa'], '-', label='SPA')
+    plt.plot_date(output_day.index, output_day['emu'], 'o', label='Emulator')
+    plt.plot_date(output_day.index, output_day['gday'], '.', label='GDAY')
     plt.ylabel('GPP ($\mu$mol m$^{-2}$ s$^{-1}$)')
     plt.legend()
     plt.show()
